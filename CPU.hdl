@@ -1,0 +1,121 @@
+// This file is part of www.nand2tetris.org
+// and the book "The Elements of Computing Systems"
+// by Nisan and Schocken, MIT Press.
+// File name: CPU.hdl
+
+/**
+ * The Hack Central Processing Unit (CPU).
+ * Parses and executes 16-bit Hack machine instructions:
+ *
+ * A-Instruction: 0 vvv vvvv vvvv vvvv
+ *   Loads the 15-bit constant into the A-register.
+ *
+ * C-Instruction: 1 1 1 a  c1 c2 c3 c4  c5 c6 d1 d2  d3 j1 j2 j3
+ *   - a-bit (instruction[12]): selects between A-register (0) and memory inM (1) as ALU Y-input.
+ *   - c1-c6 (instruction[11..6]): ALU control bits (zx, nx, zy, ny, f, no).
+ *   - d1-d3 (instruction[5..3]): destination bits (d1->A, d2->D, d3->M).
+ *   - j1-j3 (instruction[2..0]): jump condition bits (j1->out<0, j2->out=0, j3->out>0).
+ */
+
+CHIP CPU {
+
+    IN  inM[16],         // M value input  (M = contents of RAM[A])
+        instruction[16], // Instruction for execution
+        reset;           // Signals whether to restart the current program (reset==1)
+                         // or continue executing (reset==0).
+
+    OUT outM[16],        // M value output
+        writeM,          // Write to M? 
+        addressM[15],    // Address in data memory (of M)
+        pc[15];          // Address of next instruction
+
+    PARTS:
+    // -------------------------------------------------------------
+    // Instruction Decoding
+    // -------------------------------------------------------------
+    // instruction[15] == 0: A-instruction (@value)
+    // instruction[15] == 1: C-instruction
+    Not(in=instruction[15], out=isA);
+    Not(in=isA, out=isC);
+
+    // -------------------------------------------------------------
+    // A-Register Logic
+    // -------------------------------------------------------------
+    // If A-instruction, route instruction constant into A-register.
+    // If C-instruction, route ALU computation output into A-register.
+    Mux16(a=instruction, b=aluOut, sel=instruction[15], out=inA);
+
+    // A-register is updated if:
+    // (1) An A-instruction is executed, OR
+    // (2) A C-instruction asserts the d1 destination bit (instruction[5]).
+    And(a=isC, b=instruction[5], out=loadAFromC);
+    Or(a=isA, b=loadAFromC, out=loadA);
+    ARegister(in=inA, load=loadA, out=aOut, out[0..14]=addressM);
+
+    // -------------------------------------------------------------
+    // D-Register Logic
+    // -------------------------------------------------------------
+    // D-register is updated only if C-instruction asserts d2 bit (instruction[4]).
+    And(a=isC, b=instruction[4], out=loadD);
+    DRegister(in=aluOut, load=loadD, out=dOut);
+
+    // -------------------------------------------------------------
+    // ALU Input Y Selection (A vs M)
+    // -------------------------------------------------------------
+    // instruction[12] (the 'a' bit) selects between A-register (0) and inM (1).
+    Mux16(a=aOut, b=inM, sel=instruction[12], out=yIn);
+
+    // -------------------------------------------------------------
+    // Hack ALU
+    // -------------------------------------------------------------
+    // Executes computation specified by c1..c6 bits (instruction[11..6]).
+    ALU(x=dOut, y=yIn,
+        zx=instruction[11],
+        nx=instruction[10],
+        zy=instruction[9],
+        ny=instruction[8],
+        f=instruction[7],
+        no=instruction[6],
+        out=aluOut,
+        out=outM,
+        zr=zrOut,
+        ng=ngOut);
+
+    // -------------------------------------------------------------
+    // Memory Write Enable (writeM)
+    // -------------------------------------------------------------
+    // Asserted only for C-instructions where d3 bit (instruction[3]) is set.
+    And(a=isC, b=instruction[3], out=writeM);
+
+    // -------------------------------------------------------------
+    // Jump Condition & Program Counter (PC)
+    // -------------------------------------------------------------
+    // ALU status flags:
+    // zrOut = 1 if out == 0
+    // ngOut = 1 if out < 0
+    // Positive condition: out > 0 (neither zero nor negative)
+    Not(in=zrOut, out=notZr);
+    Not(in=ngOut, out=notNg);
+    And(a=notZr, b=notNg, out=isPos);
+
+    // Evaluate the three individual jump condition branches:
+    // j1: jump if out < 0
+    // j2: jump if out == 0
+    // j3: jump if out > 0
+    And(a=instruction[2], b=ngOut, out=jumpLt);
+    And(a=instruction[1], b=zrOut, out=jumpEq);
+    And(a=instruction[0], b=isPos, out=jumpGt);
+
+    // Combine jump conditions:
+    Or(a=jumpLt, b=jumpEq, out=jumpLe);
+    Or(a=jumpLe, b=jumpGt, out=shouldJump);
+
+    // A jump can only take place during a C-instruction
+    And(a=isC, b=shouldJump, out=pcLoad);
+
+    // Program Counter:
+    // - If reset == 1: PC is set to 0.
+    // - If pcLoad == 1: PC loads jump address from A-register (aOut).
+    // - Otherwise: PC increments by 1 (inc = true).
+    PC(in=aOut, load=pcLoad, inc=true, reset=reset, out[0..14]=pc);
+}

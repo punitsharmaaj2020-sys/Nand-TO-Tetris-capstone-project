@@ -1,0 +1,39 @@
+// This file is part of www.nand2tetris.org
+// and the book "The Elements of Computing Systems"
+// by Nisan and Schocken, MIT Press.
+// File name: Computer.hdl
+
+/**
+ * The HACK Computer Architecture.
+ * Integrates the CPU, ROM32K, and Memory chips.
+ *
+ * Execution flow:
+ * 1. ROM32K outputs the current instruction pointed to by the CPU's PC.
+ * 2. CPU executes the instruction, reading inM from Memory and writing outM to Memory.
+ * 3. Memory routes read and write operations to RAM16K, Screen, or Keyboard.
+ * 4. When reset is 1, PC is reset to 0, restarting program execution.
+ */
+
+CHIP Computer {
+
+    IN reset;
+
+    PARTS:
+    // Instruction memory (ROM32K): Program code storage
+    ROM32K(address=pc, out=instruction);
+
+    // Central Processing Unit (CPU)
+    CPU(inM=memOut, 
+        instruction=instruction, 
+        reset=reset, 
+        outM=outM, 
+        writeM=writeM, 
+        addressM=addressM, 
+        pc=pc);
+
+    // Data memory (Memory): RAM16K, Screen, Keyboard
+    Memory(in=outM, 
+           load=writeM, 
+           address=addressM, 
+           out=memOut);
+}
